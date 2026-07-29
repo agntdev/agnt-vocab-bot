@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Start Study Session",
+    "steps": [
+      {
+        "expect": [
+          {
+            "method": "sendMessage",
+            "payload": {
+              "text": "Begin studying current deck with reveal-and-rate interface"
+            }
+          }
+        ],
+        "send": {
+          "callback": "study:start"
+        }
+      }
+    ]
+  }
+]
