@@ -5,9 +5,9 @@
       {
         "expect": [
           {
-            "method": "sendMessage",
+            "method": "editMessageText",
             "payload": {
-              "text": "Create new deck or import CSV file"
+              "text": "Build a private deck your way. Type cards one by one, or import a CSV with prompt,answer,example columns."
             }
           }
         ],

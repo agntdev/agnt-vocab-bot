@@ -1,17 +1,20 @@
 import { Composer } from "grammy";
+import type { Ctx } from "../bot.js";
+import { inlineButton, inlineKeyboard, registerMainMenuItem } from "../toolkit/index.js";
+import { ensureProfile, getCard, listCards, listDecks, rate, Rating, recordStudy, saveCard } from "../vocab/store.js";
+import { now } from "../vocab/time.js";
+import { scheduleDailyReminder } from "../vocab/reminders.js";
 
-// SCAFFOLD — generated from the bot blueprint BEFORE the agent runs.
-// Keep a LIVE registration (.command / .callbackQuery / …) so this feature is
-// never an empty stub. Replace the reply body with real logic + copy; if you
-// change the user-facing text, update tests/specs to match EXACTLY.
-// Do NOT rewrite src/bot.ts — buildBot() already auto-loads this module.
-// Menu: wire this into /start via registerMainMenuItem({ label: "Start Study Session", data: "study:start" }) if the toolkit exposes it.
-
-const composer = new Composer();
-
-composer.callbackQuery("study:start", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await ctx.reply("Begin studying current deck with reveal-and-rate interface");
-});
-
+registerMainMenuItem({ label: "📚 Start studying", data: "study:start", order: 10 });
+const composer = new Composer<Ctx>(); const uid = (ctx: Ctx) => ctx.from?.id;
+const back = inlineKeyboard([[inlineButton("⬅️ Back to menu", "menu:main")]]);
+const ratings = inlineKeyboard([[inlineButton("Again", "study:rate:again"), inlineButton("Hard", "study:rate:hard")], [inlineButton("Good", "study:rate:good"), inlineButton("Easy", "study:rate:easy")], [inlineButton("Pause", "study:pause")]]);
+composer.callbackQuery("study:start", async (ctx) => { await ctx.answerCallbackQuery(); await chooseDeck(ctx); });
+composer.callbackQuery(/^study:deck:/, async (ctx) => { await ctx.answerCallbackQuery(); ctx.session.currentDeckId = ctx.callbackQuery.data.slice("study:deck:".length); ctx.session.currentCardIndex = ctx.session.pausedPosition ?? 0; await showNext(ctx); });
+composer.callbackQuery("study:reveal", async (ctx) => { await ctx.answerCallbackQuery(); const id = ctx.session.currentCardId; const user = uid(ctx); if (!id || !user) return; const card = await getCard(user, id); if (!card) { await ctx.editMessageText("That card is no longer here. Let’s pick another one.", { reply_markup: back }); return; } const example = card.example ? `\n\nExample: ${card.example}` : ""; await ctx.editMessageText(`${card.prompt}\n\n${card.answer}${example}\n\nHow did that feel?`, { reply_markup: ratings }); });
+composer.callbackQuery(/^study:rate:(again|hard|good|easy)$/, async (ctx) => { await ctx.answerCallbackQuery(); const user = uid(ctx); const id = ctx.session.currentCardId; if (!user || !id) return; const [card, profile] = await Promise.all([getCard(user, id), ensureProfile(user)]); if (!card || !profile) { await ctx.editMessageText("I couldn’t save that review just now. Please try again.", { reply_markup: back }); return; } await saveCard(user, rate(card, ctx.match[1] as Rating, profile.schedule_intensity)); const updated = await recordStudy(profile); const cards = ctx.session.currentDeckId ? await listCards(user, ctx.session.currentDeckId) : []; await scheduleDailyReminder(ctx as Ctx & { env?: import("../toolkit/session/durable.js").WorkerEnv }, updated, cards?.filter((item) => item.due_date <= now()).length ?? 0); ctx.session.currentCardIndex = (ctx.session.currentCardIndex ?? 0) + 1; await showNext(ctx); });
+composer.callbackQuery("study:pause", async (ctx) => { await ctx.answerCallbackQuery(); ctx.session.pausedPosition = ctx.session.currentCardIndex; await ctx.editMessageText("Your place is saved. Come back when you’re ready for the next card.", { reply_markup: inlineKeyboard([[inlineButton("Resume study", "study:resume")], [inlineButton("⬅️ Back to menu", "menu:main")]]) }); });
+composer.callbackQuery("study:resume", async (ctx) => { await ctx.answerCallbackQuery(); if (!ctx.session.currentDeckId) { await chooseDeck(ctx); return; } ctx.session.currentCardIndex = ctx.session.pausedPosition ?? 0; await showNext(ctx); });
+async function chooseDeck(ctx: Ctx) { const user = uid(ctx); if (!user) return; const decks = await listDecks(user); if (!decks) { await ctx.editMessageText("Your study space isn’t set up yet. Try again when storage is available.", { reply_markup: back }); return; } if (decks.length === 0) { await ctx.editMessageText("No decks yet — tap Add deck to create your first one.", { reply_markup: inlineKeyboard([[inlineButton("➕ Add deck", "deck:create")], [inlineButton("⬅️ Back to menu", "menu:main")]]) }); return; } if (decks.length === 1) { ctx.session.currentDeckId = decks[0].id; ctx.session.currentCardIndex = 0; await showNext(ctx); return; } await ctx.editMessageText("Choose a deck for this session.", { reply_markup: inlineKeyboard([...decks.slice(0, 6).map((deck) => [inlineButton(deck.title.slice(0, 24), `study:deck:${deck.id}`)]), [inlineButton("⬅️ Back to menu", "menu:main")]]) }); }
+async function showNext(ctx: Ctx) { const user = uid(ctx); const deck = ctx.session.currentDeckId; if (!user || !deck) return; const cards = await listCards(user, deck); if (!cards) { await ctx.editMessageText("I couldn’t open that deck. Please try again.", { reply_markup: back }); return; } const profile = await ensureProfile(user); if (!profile) { await ctx.editMessageText("Your study space isn’t set up yet. Try again when storage is available.", { reply_markup: back }); return; } const due = cards.filter((card) => card.due_date <= now()); const newCards = cards.filter((card) => card.state === "new").slice(0, profile.daily_new_card_limit); const queue = due.length ? due : newCards; const index = ctx.session.currentCardIndex ?? 0; const card = queue[index]; if (!card) { ctx.session.pausedPosition = undefined; await ctx.editMessageText("Nice work — you’ve finished this session. Keep that momentum going tomorrow.", { reply_markup: back }); return; } ctx.session.currentCardId = card.id; await ctx.editMessageText(`Card ${index + 1} of ${queue.length}\n\n${card.prompt}`, { reply_markup: inlineKeyboard([[inlineButton("Reveal answer", "study:reveal")], [inlineButton("Pause", "study:pause")]]) }); }
 export default composer;

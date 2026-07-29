@@ -1,17 +1,18 @@
 import { Composer } from "grammy";
+import type { Ctx } from "../bot.js";
+import { inlineButton, inlineKeyboard, registerMainMenuItem } from "../toolkit/index.js";
+import { ensureProfile, getProfile, listCards, listDecks, saveProfile } from "../vocab/store.js";
+import { now } from "../vocab/time.js";
 
-// SCAFFOLD — generated from the bot blueprint BEFORE the agent runs.
-// Keep a LIVE registration (.command / .callbackQuery / …) so this feature is
-// never an empty stub. Replace the reply body with real logic + copy; if you
-// change the user-facing text, update tests/specs to match EXACTLY.
-// Do NOT rewrite src/bot.ts — buildBot() already auto-loads this module.
-// Menu: wire this into /start via registerMainMenuItem({ label: "My Progress", data: "progress:view" }) if the toolkit exposes it.
-
-const composer = new Composer();
-
-composer.callbackQuery("progress:view", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await ctx.reply("Show streak, learned cards, and due reviews");
-});
-
+registerMainMenuItem({ label: "📈 My progress", data: "progress:view", order: 30 });
+const composer = new Composer<Ctx>();
+const back = inlineKeyboard([[inlineButton("⬅️ Back to menu", "menu:main")]]);
+const uid = (ctx: Ctx) => ctx.from?.id;
+composer.callbackQuery("progress:view", async (ctx) => { await ctx.answerCallbackQuery(); await showProgress(ctx); });
+composer.callbackQuery("progress:settings", async (ctx) => { await ctx.answerCallbackQuery(); const user = uid(ctx); if (!user) return; const profile = await getProfile(user); if (!profile) { await ctx.editMessageText("Your study space isn’t set up yet. Try again when storage is available.", { reply_markup: back }); return; } await ctx.editMessageText(`Your daily new-card limit is ${profile.daily_new_card_limit}. Your review pace is ${profile.schedule_intensity === 1 ? "steady" : profile.schedule_intensity > 1 ? "faster" : "gentler"}. Reminders use ${profile.timezone}.`, { reply_markup: inlineKeyboard([[inlineButton("10 new cards", "progress:limit:10"), inlineButton("20 new cards", "progress:limit:20")], [inlineButton("Gentler pace", "progress:pace:0.8"), inlineButton("Faster pace", "progress:pace:1.2")], [inlineButton("Set timezone", "progress:timezone")], [inlineButton("⬅️ Progress", "progress:view")]]) }); });
+composer.callbackQuery(/^progress:limit:(10|20)$/, async (ctx) => { await ctx.answerCallbackQuery(); const profile = await ensureProfile(uid(ctx) ?? 0); if (!profile) return; await saveProfile({ ...profile, daily_new_card_limit: Number(ctx.match[1]) }); await ctx.editMessageText(`You’ll see up to ${ctx.match[1]} new cards a day. A manageable rhythm wins.`, { reply_markup: inlineKeyboard([[inlineButton("⬅️ Progress", "progress:view")]]) }); });
+composer.callbackQuery(/^progress:pace:(0\.8|1\.2)$/, async (ctx) => { await ctx.answerCallbackQuery(); const profile = await ensureProfile(uid(ctx) ?? 0); if (!profile) return; const pace = Number(ctx.match[1]); await saveProfile({ ...profile, schedule_intensity: pace }); await ctx.editMessageText(`Your review pace is now ${pace < 1 ? "gentler" : "faster"}. You can change it anytime.`, { reply_markup: inlineKeyboard([[inlineButton("⬅️ Progress", "progress:view")]]) }); });
+composer.callbackQuery("progress:timezone", async (ctx) => { await ctx.answerCallbackQuery(); ctx.session.step = "timezone"; await ctx.editMessageText("Send your timezone, like Europe/London or America/New_York. I’ll use it for 09:00 reminders.", { reply_markup: inlineKeyboard([[inlineButton("Cancel", "progress:settings")]]) }); });
+composer.on("message:text", async (ctx, next) => { if (ctx.session.step !== "timezone") return next(); const zone = ctx.message.text.trim(); try { Intl.DateTimeFormat(undefined, { timeZone: zone }); } catch { await ctx.reply("I couldn’t recognise that timezone. Try a name like Europe/London."); return; } const user = uid(ctx); const profile = user ? await ensureProfile(user) : undefined; if (!profile) { await ctx.reply("Your study space isn’t set up yet. Try again when storage is available."); return; } await saveProfile({ ...profile, timezone: zone }); ctx.session.step = "idle"; await ctx.reply(`Reminders will arrive at 09:00 in ${zone}.`); });
+async function showProgress(ctx: Ctx) { const user = uid(ctx); if (!user) return; const [profile, decks] = await Promise.all([ensureProfile(user), listDecks(user)]); if (!profile || !decks) { await ctx.editMessageText("Your study space isn’t set up yet. Try again when storage is available.", { reply_markup: back }); return; } const all = (await Promise.all(decks.map((deck) => listCards(user, deck.id)))).flatMap((cards) => cards ?? []); const due = all.filter((card) => card.due_date <= now()).length; const learned = all.filter((card) => card.state === "review").length; await ctx.editMessageText(`You’re on a ${profile.streak_count}-day streak.\n\n${learned} cards learned\n${due} reviews due\n${all.length} cards in your decks\n\nSmall daily wins add up.`, { reply_markup: inlineKeyboard([[inlineButton("Study due cards", "study:start")], [inlineButton("Study settings", "progress:settings")], [inlineButton("⬅️ Back to menu", "menu:main")]]) }); }
 export default composer;

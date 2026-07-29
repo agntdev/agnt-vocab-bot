@@ -5,9 +5,9 @@
       {
         "expect": [
           {
-            "method": "sendMessage",
+            "method": "editMessageText",
             "payload": {
-              "text": "Show streak, learned cards, and due reviews"
+              "text": "Your study space isn’t set up yet. Try again when storage is available."
             }
           }
         ],
