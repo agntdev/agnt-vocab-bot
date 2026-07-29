@@ -14,6 +14,7 @@
  */
 
 import type { StorageAdapter } from "grammy";
+import { now } from "../../vocab/time.js";
 
 // Minimal shapes so this file type-checks without pulling @cloudflare/workers-types
 // into the Node build. The real bindings are provided by the Workers runtime.
@@ -160,10 +161,10 @@ export class ChatDO {
   // Fires at the earliest reminder's wall-clock time. Sends every due reminder,
   // drops them, and re-arms for whatever remains.
   async alarm(): Promise<void> {
-    const now = Date.now();
+    const currentTime = now();
     const list = (await this.state.storage.get<Reminder[]>("reminders")) ?? [];
-    const due = list.filter((r) => r.at <= now);
-    const rest = list.filter((r) => r.at > now);
+    const due = list.filter((r) => r.at <= currentTime);
+    const rest = list.filter((r) => r.at > currentTime);
     for (const r of due) {
       await tg(this.env.BOT_TOKEN, "sendMessage", { chat_id: r.chatId, text: r.text });
     }
