@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Add Deck",
+    "steps": [
+      {
+        "expect": [
+          {
+            "method": "sendMessage",
+            "payload": {
+              "text": "Create new deck or import CSV file"
+            }
+          }
+        ],
+        "send": {
+          "callback": "deck:create"
+        }
+      }
+    ]
+  }
+]
